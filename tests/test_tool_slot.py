@@ -297,3 +297,159 @@ def test_run_no_events_for_stable_slots(tmp_path):
     # No events should be emitted
     assert len(emitted_events) == 0
     assert stats["events_emitted"] == 0
+
+
+# ── Face Recognition Integration Tests ────────────────────────────────
+# Validate that event-gated face recognition in tool_slot/detector.py
+# correctly attaches person metadata when person_tracks are supplied,
+# and gracefully skips when they are not.
+
+import unittest.mock as _mock
+from dataclasses import dataclass as _dc
+
+
+@_dc
+class _FakeObs:
+    """Minimal TrackObs-like object for face tests."""
+    track_id: int
+    bbox: tuple
+
+
+class TestFaceRecognitionToolSlot:
+    """Event-gated face recognition hooks in the tool_slot detector."""
+
+    def _make_event_and_person_tracks(self, tmp_path, known: bool):
+        """
+        Bring up a tool-removal video + person_tracks dict, run the detector
+        with a mocked IdentityTracker, and return (emitted_events, mock_tracker).
+        """
+        import detections.tool_slot.detector as det_mod
+
+        ref_dir = tmp_path / "data" / "reference"
+        create_reference_image(ref_dir / "cam01_slot_01.jpg", label="hammer")
+
+        video_path = tmp_path / "data" / "clips" / "cam01_ws_face.mp4"
+        create_test_video_with_tool_removal(
+            video_path,
+            duration_s=20.0,
+            removal_start_s=5.0,
+            removal_duration_s=10.0,
+            fps=10,
+        )
+
+        # person_tracks: person is right next to the slot at the removal time
+        # slot ROI = [120, 80, 90, 160] → person bbox overlapping it
+        fake_obs = _FakeObs(track_id=7, bbox=(100, 60, 230, 260))
+        person_tracks = {ts: [fake_obs] for ts in [5.0, 5.5, 6.0, 7.0, 8.0]}
+
+        mock_tracker = _mock.MagicMock()
+        mock_tracker.process_track.return_value = (
+            ("Jhithesh", 0.91) if known else ("Unknown", 0.0)
+        )
+
+        emitted_events = []
+
+        def capture_emit(**kwargs):
+            event = {
+                "event_id": f"evt_{len(emitted_events):06d}",
+                "event_type": kwargs.get("event_type"),
+                "details": kwargs.get("details"),
+                "note": kwargs.get("note"),
+            }
+            emitted_events.append(event)
+            return event
+
+        mock_writer = _mock.MagicMock()
+        mock_writer.emit.side_effect = capture_emit
+
+        with patch("detections.tool_slot.detector.REFERENCE_DIR", str(ref_dir)), \
+             _mock.patch.object(det_mod, "_get_identity_tracker", return_value=mock_tracker):
+            run(
+                camera_id="cam01",
+                source=str(video_path),
+                cfg=CAMERA_CFG,
+                writer=mock_writer,
+                person_tracks=person_tracks,
+            )
+
+        return emitted_events, mock_tracker
+
+    def test_known_person_injected_in_tool_event(self, tmp_path):
+        """When a known person is nearest to the slot, 'person' appears in details."""
+        events, _ = self._make_event_and_person_tracks(tmp_path, known=True)
+        removal_events = [e for e in events if e["event_type"] == "tool_removed"]
+        assert removal_events, "Expected at least one tool_removed event"
+        evt = removal_events[0]
+        assert "person" in evt["details"], (
+            f"'person' key missing from details: {evt['details']}"
+        )
+        assert evt["details"]["person"]["name"] == "Jhithesh"
+        assert evt["details"]["person"]["status"] == "AUTHORIZED"
+        assert evt["details"]["person"]["face_confidence"] == pytest.approx(0.91, abs=1e-4)
+
+    def test_unknown_person_no_person_key(self, tmp_path):
+        """When face engine returns 'Unknown', no 'person' key in details."""
+        events, _ = self._make_event_and_person_tracks(tmp_path, known=False)
+        removal_events = [e for e in events if e["event_type"] == "tool_removed"]
+        assert removal_events
+        assert "person" not in removal_events[0]["details"]
+
+    def test_no_person_tracks_no_face_lookup(self, tmp_path):
+        """Without person_tracks, process_track should never be called."""
+        import detections.tool_slot.detector as det_mod
+
+        ref_dir = tmp_path / "data" / "reference"
+        create_reference_image(ref_dir / "cam01_slot_01.jpg", label="hammer")
+        video_path = tmp_path / "data" / "clips" / "cam01_ws_base.mp4"
+        create_test_video_with_tool_removal(
+            video_path, duration_s=20.0, removal_start_s=5.0, removal_duration_s=10.0, fps=10
+        )
+
+        mock_tracker = _mock.MagicMock()
+        mock_tracker.process_track.return_value = ("Jhithesh", 0.91)
+
+        emitted_events = []
+
+        def capture_emit(**kwargs):
+            event = {"event_type": kwargs.get("event_type"), "details": kwargs.get("details")}
+            emitted_events.append(event)
+            return event
+
+        mock_writer = _mock.MagicMock()
+        mock_writer.emit.side_effect = capture_emit
+
+        with patch("detections.tool_slot.detector.REFERENCE_DIR", str(ref_dir)), \
+             _mock.patch.object(det_mod, "_get_identity_tracker", return_value=mock_tracker):
+            run(
+                camera_id="cam01",
+                source=str(video_path),
+                cfg=CAMERA_CFG,
+                writer=mock_writer,
+                # person_tracks deliberately omitted
+            )
+
+        # process_track must NOT have been called (no persons supplied)
+        mock_tracker.process_track.assert_not_called()
+        # Events still emitted without person key
+        removal_events = [e for e in emitted_events if e["event_type"] == "tool_removed"]
+        assert removal_events
+        assert "person" not in removal_events[0]["details"]
+
+    def test_find_nearest_track_overlap_preferred(self):
+        """_find_nearest_track prefers overlapping tracks over non-overlapping ones."""
+        from detections.tool_slot.detector import _find_nearest_track
+
+        # slot ROI at (100, 80, 90, 160): covers x 100-190, y 80-240
+        slot_roi = (100, 80, 90, 160)
+
+        overlapping = _FakeObs(track_id=1, bbox=(90, 70, 200, 250))   # overlaps
+        far_away = _FakeObs(track_id=2, bbox=(500, 400, 600, 500))     # far away
+
+        result = _find_nearest_track(slot_roi, [overlapping, far_away])
+        assert result is not None
+        assert result.track_id == 1
+
+    def test_find_nearest_track_returns_none_for_empty(self):
+        """_find_nearest_track returns None when no tracks are given."""
+        from detections.tool_slot.detector import _find_nearest_track
+        assert _find_nearest_track((0, 0, 100, 100), []) is None

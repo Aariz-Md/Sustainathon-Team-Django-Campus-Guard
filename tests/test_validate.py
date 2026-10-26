@@ -45,9 +45,11 @@ def _valid_camera_cfg() -> dict:
                 "source": "cam01_gate_01.mp4",
                 "start_time": "2026-10-20T00:00:00Z",
                 "zones": [
-                    [10.0, 20.0],
-                    [30.0, 40.0],
-                    [50.0, 60.0]
+                    {
+                        "id": "zone_01",
+                        "restricted": True,
+                        "polygon": [[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]]
+                    }
                 ],
             }
         }
