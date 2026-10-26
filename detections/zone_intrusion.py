@@ -134,75 +134,156 @@ def render_overlay(
     in_hours: bool,
     video_time_s: float,
     frame_dt: datetime,
-) -> np.ndarray:
-    """Generate an annotated frame showing polygons, status, tracks, and timers."""
+    gate_line: tuple[tuple[int, int], tuple[int, int]] | None = None,
+    fps_measured: float | None = None,
+) -> tuple[np.ndarray, float]:
+    """Generate an annotated frame showing polygons, status, tracks, and timers.
+    
+    Step 3b OpenCV overlay styling:
+    - Person boxes: 2px blue (#2F80ED) rectangle with "PERSON nn%" tag
+    - Restricted zone hits: red (#E5484D) box with "INTRUDER nn%" tag
+    - Restricted zone polygon: thin red outline with "RESTRICTED ZONE" tag
+    - Gate crossing line: thin amber line
+    - Integer coordinates, filled rectangles for tags, no translucent blending
+    """
+    # Record start time for FPS measurement
+    start_time = time.perf_counter()
+    
+    # Color constants (BGR format for OpenCV)
+    COLOR_BLUE = (237, 128, 47)       # #2F80ED in BGR
+    COLOR_RED = (77, 132, 229)        # #E5484D in BGR
+    COLOR_AMBER = (0, 191, 255)       # Amber for gate line
+    COLOR_WHITE = (255, 255, 255)
+    COLOR_BLACK = (0, 0, 0)
+    
     if frame is not None:
         vis = frame.copy()
     else:
         vis = np.zeros((720, 1280, 3), dtype=np.uint8)
-
-    # 1. Top banner / operating hours status
-    h_str = "OPEN (Operating Hours)" if in_hours else "CLOSED (After-Hours)"
-    banner_bg = (20, 20, 20)
-    banner_text = f"t={video_time_s:.2f}s | {frame_dt.strftime('%Y-%m-%d %H:%M:%S UTC')} | {h_str}"
-    cv2.rectangle(vis, (0, 0), (int(vis.shape[1]), 36), banner_bg, -1)
-    banner_color = (0, 255, 0) if in_hours else (0, 140, 255)
-    cv2.putText(vis, banner_text, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, banner_color, 2)
-
-    # 2. Configured Zone Polygons
+    
+    h, w = vis.shape[:2]
+    
+    # 1. Gate crossing line (amber thin line) - drawn FIRST so it's behind other elements
+    if gate_line:
+        p1, p2 = gate_line
+        p1 = (int(p1[0]), int(p1[1]))
+        p2 = (int(p2[0]), int(p2[1]))
+        cv2.line(vis, p1, p2, COLOR_AMBER, 1, cv2.LINE_AA)
+    
+    # 2. Restricted Zone Polygons (thin red outline, no fill, "RESTRICTED ZONE" tag)
     for z in cam_cfg.zones:
         poly = polys.get(z.id)
         if poly is None or poly.is_empty:
             continue
         pts = np.array(poly.exterior.coords, dtype=np.int32)
-        color = (0, 0, 220) if z.restricted else (255, 200, 0)
-        cv2.polylines(vis, [pts], isClosed=True, color=color, thickness=2)
-
-        # Translucent fill
-        overlay = vis.copy()
-        cv2.fillPoly(overlay, [pts], color)
-        cv2.addWeighted(overlay, 0.2, vis, 0.8, 0, vis)
-
-        cx, cy = int(poly.centroid.x), int(poly.centroid.y)
-        tag = f"{z.id} [R]" if z.restricted else f"{z.id} [OPEN]"
-        cv2.putText(vis, tag, (int(cx - 40), int(cy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-    # 3. Person Tracks & States
+        
+        if z.restricted:
+            # Thin red outline for restricted zones
+            cv2.polylines(vis, [pts], isClosed=True, color=COLOR_RED, thickness=1, lineType=cv2.LINE_AA)
+            
+            # "RESTRICTED ZONE" tag at top-left corner of polygon
+            min_x = np.min(pts[:, 0])
+            min_y = np.min(pts[:, 1])
+            tag_text = "RESTRICTED ZONE"
+            tag_bg_x = int(min_x)
+            tag_bg_y = int(max(min_y - 20, 0))
+            
+            # Filled rectangle background for tag
+            (text_w, text_h), baseline = cv2.getTextSize(
+                tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1
+            )
+            cv2.rectangle(vis, (tag_bg_x, tag_bg_y), (tag_bg_x + text_w, tag_bg_y + text_h + 4), COLOR_RED, -1)
+            cv2.putText(vis, tag_text, (tag_bg_x, tag_bg_y + text_h), cv2.FONT_HERSHEY_SIMPLEX, 0.4, COLOR_WHITE, 1, cv2.LINE_AA)
+        else:
+            # Open zones - blue outline
+            cv2.polylines(vis, [pts], isClosed=True, color=COLOR_BLUE, thickness=1, lineType=cv2.LINE_AA)
+    
+    # 3. Person Tracks & Boxes - Only label if high confidence or near zone
+    CONF_THRESHOLD = 0.5  # Minimum confidence to show label
+    ZONE_BUFFER = 50  # Pixel buffer to consider "near" a zone
+    
+    # Get all zone bounding boxes for proximity check
+    zone_bboxes = []
+    for z in cam_cfg.zones:
+        poly = polys.get(z.id)
+        if poly and not poly.is_empty:
+            minx, miny, maxx, maxy = poly.bounds
+            zone_bboxes.append((minx - ZONE_BUFFER, miny - ZONE_BUFFER, maxx + ZONE_BUFFER, maxy + ZONE_BUFFER))
+    
+    def is_near_zone(x, y) -> bool:
+        """Check if point is inside or near any zone."""
+        for zb in zone_bboxes:
+            if zb[0] <= x <= zb[2] and zb[1] <= y <= zb[3]:
+                return True
+        return False
+    
     for obs in tracks:
         st_info = track_states.get(obs.track_id, {})
         state = st_info.get("state", _OUTSIDE)
-        dwell = st_info.get("dwell", 0.0)
-
-        if state == _INSIDE_ALERTED:
-            box_color = (0, 0, 255)       # Red
-            label = f"ID:{obs.track_id} [ALERTED]"
-        elif state == _INSIDE_PENDING:
-            box_color = (0, 215, 255)     # Yellow / Gold
-            label = f"ID:{obs.track_id} [PENDING {dwell:.1f}s]"
-        else:
-            box_color = (255, 180, 50)    # Blue
-            label = f"ID:{obs.track_id} [OUTSIDE]"
-
+        confidence = getattr(obs, 'confidence', 0.95)  # Default to high if not available
+        
+        # Get bounding box
         x1, y1, x2, y2 = (int(v) for v in obs.bbox)
-        cv2.rectangle(vis, (x1, y1), (x2, y2), box_color, 2)
-
-        # Foot point
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        
+        # Determine box color and label based on state
+        is_inside_restricted = state in (_INSIDE_ALERTED, _INSIDE_PENDING)
+        near_zone = is_near_zone(cx, cy)
+        
+        # Only show if high confidence or near/in zone
+        should_label = confidence >= CONF_THRESHOLD or near_zone or is_inside_restricted
+        
+        if is_inside_restricted:
+            # RED box for intruder in restricted zone
+            box_color = COLOR_RED
+            if should_label:
+                tag_text = f"INTRUDER {int(confidence * 100)}%"
+            else:
+                tag_text = ""
+        else:
+            # BLUE box for normal person detection
+            box_color = COLOR_BLUE
+            if should_label:
+                tag_text = f"PERSON {int(confidence * 100)}%"
+            else:
+                tag_text = ""
+        
+        # Draw 2px rectangle
+        cv2.rectangle(vis, (x1, y1), (x2, y2), box_color, 2, cv2.LINE_AA)
+        
+        # Draw tag with filled rectangle background
+        if tag_text:
+            (text_w, text_h), baseline = cv2.getTextSize(
+                tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1
+            )
+            # Position tag above the box
+            tag_x = x1
+            tag_y = max(y1 - 8, text_h + 8)
+            
+            # Filled rectangle background for tag
+            cv2.rectangle(vis, (tag_x, tag_y - text_h - 2), (tag_x + text_w, tag_y + 2), box_color, -1)
+            cv2.putText(vis, tag_text, (tag_x, tag_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, COLOR_WHITE, 1, cv2.LINE_AA)
+        
+        # Small foot point circle
         fx, fy = (int(v) for v in obs.foot)
-        cv2.circle(vis, (fx, fy), 5, box_color, -1)
-        cv2.circle(vis, (fx, fy), 7, (255, 255, 255), 1)
+        cv2.circle(vis, (fx, fy), 4, box_color, -1, cv2.LINE_AA)
+    
+    # 4. Top banner with FPS (compact, no background fill)
+    fps_text = f"{fps_measured:.1f} FPS | t={video_time_s:.1f}s" if fps_measured is not None else f"t={video_time_s:.1f}s"
+    status_text = "OPEN" if in_hours else "CLOSED"
+    status_color = (0, 200, 0) if in_hours else (0, 100, 255)
+    banner_text = f"{fps_text} | {frame_dt.strftime('%H:%M:%S')} | {status_text}"
+    
+    # Draw text directly on frame (no background rectangle)
+    cv2.putText(vis, banner_text, (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1, cv2.LINE_AA)
+    
+    # Calculate and return processing time
+    end_time = time.perf_counter()
+    processing_time = end_time - start_time
+    
+    return vis, processing_time
 
-        cv2.putText(
-            vis,
-            label,
-            (int(x1), int(max(y1 - 6, 15))),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            box_color,
-            1,
-            cv2.LINE_AA,
-        )
-
-    return vis
 
 
 class DebugVideoWriter:
