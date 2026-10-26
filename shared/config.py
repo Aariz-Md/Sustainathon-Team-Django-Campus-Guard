@@ -81,12 +81,23 @@ class ToolSlot(BaseModel):
 
 class CameraConfig(BaseModel):
     location: str
-    source: str
+    source: str | None = None
+    sources: list[str] = []
     start_time: str
     lines: list[Line] = []
     zones: list[Zone] = []
     operating_hours: list[HoursWindow] = []
     tool_slots: list[ToolSlot] = []
+
+    @model_validator(mode="after")
+    def _validate_source_or_sources(self) -> CameraConfig:
+        if not self.source and not self.sources:
+            raise ValueError("Either 'source' or 'sources' must be specified.")
+        if self.source and not self.sources:
+            self.sources = [self.source]
+        elif self.sources and not self.source:
+            self.source = self.sources[0]
+        return self
 
 
 # ── public API ──────────────────────────────────────────────────────

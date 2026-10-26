@@ -145,7 +145,7 @@ def render_overlay(
     h_str = "OPEN (Operating Hours)" if in_hours else "CLOSED (After-Hours)"
     banner_bg = (20, 20, 20)
     banner_text = f"t={video_time_s:.2f}s | {frame_dt.strftime('%Y-%m-%d %H:%M:%S UTC')} | {h_str}"
-    cv2.rectangle(vis, (0, 0), (vis.shape[1], 36), banner_bg, -1)
+    cv2.rectangle(vis, (0, 0), (int(vis.shape[1]), 36), banner_bg, -1)
     banner_color = (0, 255, 0) if in_hours else (0, 140, 255)
     cv2.putText(vis, banner_text, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, banner_color, 2)
 
@@ -165,7 +165,7 @@ def render_overlay(
 
         cx, cy = int(poly.centroid.x), int(poly.centroid.y)
         tag = f"{z.id} [R]" if z.restricted else f"{z.id} [OPEN]"
-        cv2.putText(vis, tag, (cx - 40, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        cv2.putText(vis, tag, (int(cx - 40), int(cy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
     # 3. Person Tracks & States
     for obs in tracks:
@@ -183,18 +183,18 @@ def render_overlay(
             box_color = (255, 180, 50)    # Blue
             label = f"ID:{obs.track_id} [OUTSIDE]"
 
-        x1, y1, x2, y2 = obs.bbox
+        x1, y1, x2, y2 = (int(v) for v in obs.bbox)
         cv2.rectangle(vis, (x1, y1), (x2, y2), box_color, 2)
 
         # Foot point
-        fx, fy = obs.foot
+        fx, fy = (int(v) for v in obs.foot)
         cv2.circle(vis, (fx, fy), 5, box_color, -1)
         cv2.circle(vis, (fx, fy), 7, (255, 255, 255), 1)
 
         cv2.putText(
             vis,
             label,
-            (x1, max(y1 - 6, 15)),
+            (int(x1), int(max(y1 - 6, 15))),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.45,
             box_color,
@@ -263,9 +263,12 @@ def run(
     p = PARAMS
 
     cam_cfg: CameraConfig = cfg[camera_id]
+    zones_list = getattr(cam_cfg, "zones", []) or []
+    if not zones_list:
+        return {"frames": 0, "zone_intrusion_events": 0, "after_hours_events": 0, "note": "No zones configured"}
     polys = zone_polygons(cam_cfg)
     prepared = {zid: prep(poly) for zid, poly in polys.items()}
-    restricted_ids = {z.id for z in cam_cfg.zones if z.restricted}
+    restricted_ids = {z.id for z in zones_list if z.restricted}
 
     # Resolve video writer path
     out_debug: Path | None = None

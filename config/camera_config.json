@@ -1,11 +1,79 @@
 {
   "cam01": {
     "location": "Main gate",
-    "source": "data/clips/cam01_stable.mp4",
     "start_time": "2026-10-20T09:00:00+00:00",
-    "lines": [{"id": "gate_line", "p1": [200, 400], "p2": [1000, 400], "in_normal": [0, 1]}],
-    "zones": [{"id": "stores_zone", "restricted": true, "polygon": [[100, 100], [600, 100], [600, 500], [100, 500]]}],
-    "operating_hours": [{"days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "start": "08:00", "end": "18:00"}],
-    "tool_slots": [{"id": "slot_01", "label": "hammer", "roi": [120, 80, 90, 160], "t_present": 0.80, "t_missing": 0.55}]
+    "lines": [
+      {
+        "id": "gate_line",
+        "p1": [
+          200,
+          400
+        ],
+        "p2": [
+          1000,
+          400
+        ],
+        "in_normal": [
+          0,
+          1
+        ]
+      }
+    ],
+    "zones": [
+      {
+        "id": "stores_zone",
+        "restricted": true,
+        "polygon": [
+          [
+            100,
+            100
+          ],
+          [
+            600,
+            100
+          ],
+          [
+            600,
+            500
+          ],
+          [
+            100,
+            500
+          ]
+        ]
+      }
+    ],
+    "operating_hours": [
+      {
+        "days": [
+          "Mon",
+          "Tue",
+          "Wed",
+          "Thu",
+          "Fri"
+        ],
+        "start": "08:00",
+        "end": "18:00"
+      }
+    ],
+    "tool_slots": [
+      {
+        "id": "slot_01",
+        "label": "hammer",
+        "roi": [
+          120,
+          80,
+          90,
+          160
+        ],
+        "t_present": 0.8,
+        "t_missing": 0.55
+      }
+    ],
+    "sources": [
+      "data/clips/walk_clip.mp4",
+      "data/clips/cam01_clean_removal.mp4",
+      "data/clips/synthetic/cam01_tamper_blur.mp4"
+    ]
   }
 }

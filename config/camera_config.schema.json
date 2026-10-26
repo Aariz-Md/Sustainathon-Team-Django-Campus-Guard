@@ -23,21 +23,61 @@
   "$defs": {
     "camera": {
       "type": "object",
-      "required": ["location", "source", "start_time"],
+      "required": [
+        "location",
+        "start_time"
+      ],
       "properties": {
-        "location": { "type": "string", "minLength": 1 },
-        "source": { "type": "string", "minLength": 1 },
-        "start_time": { "type": "string", "format": "date-time" },
+        "location": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "start_time": {
+          "type": "string",
+          "format": "date-time"
+        },
         "lines": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["id", "p1", "p2", "in_normal"],
+            "required": [
+              "id",
+              "p1",
+              "p2",
+              "in_normal"
+            ],
             "properties": {
-              "id": { "type": "string" },
-              "p1": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
-              "p2": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
-              "in_normal": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 }
+              "id": {
+                "type": "string"
+              },
+              "p1": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "p2": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "in_normal": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
             }
           }
         },
@@ -45,15 +85,25 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["id", "restricted", "polygon"],
+            "required": [
+              "id",
+              "restricted",
+              "polygon"
+            ],
             "properties": {
-              "id": { "type": "string" },
-              "restricted": { "type": "boolean" },
+              "id": {
+                "type": "string"
+              },
+              "restricted": {
+                "type": "boolean"
+              },
               "polygon": {
                 "type": "array",
                 "items": {
                   "type": "array",
-                  "items": { "type": "number" },
+                  "items": {
+                    "type": "number"
+                  },
                   "minItems": 2,
                   "maxItems": 2
                 },
@@ -66,14 +116,35 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["days", "start", "end"],
+            "required": [
+              "days",
+              "start",
+              "end"
+            ],
             "properties": {
               "days": {
                 "type": "array",
-                "items": { "type": "string", "enum": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] }
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "Mon",
+                    "Tue",
+                    "Wed",
+                    "Thu",
+                    "Fri",
+                    "Sat",
+                    "Sun"
+                  ]
+                }
               },
-              "start": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" },
-              "end": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" }
+              "start": {
+                "type": "string",
+                "pattern": "^\\d{2}:\\d{2}$"
+              },
+              "end": {
+                "type": "string",
+                "pattern": "^\\d{2}:\\d{2}$"
+              }
             }
           }
         },
@@ -81,17 +152,62 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["id", "label", "roi", "t_present", "t_missing"],
+            "required": [
+              "id",
+              "label",
+              "roi",
+              "t_present",
+              "t_missing"
+            ],
             "properties": {
-              "id": { "type": "string" },
-              "label": { "type": "string" },
-              "roi": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 },
-              "t_present": { "type": "number", "minimum": 0, "maximum": 1 },
-              "t_missing": { "type": "number", "minimum": 0, "maximum": 1 }
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "roi": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 4,
+                "maxItems": 4
+              },
+              "t_present": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "t_missing": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
             }
           }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
         }
-      }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "source"
+          ]
+        },
+        {
+          "required": [
+            "sources"
+          ]
+        }
+      ]
     }
   }
 }

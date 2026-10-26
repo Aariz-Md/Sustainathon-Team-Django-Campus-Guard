@@ -332,11 +332,20 @@ def main():
     logger.info(f"Found {len(cameras)} camera(s) to process: {list(cameras.keys())}")
 
     for camera_id, cam_cfg in cameras.items():
-        logger.info(f"=== Processing {camera_id} ({cam_cfg.location}) ===")
-        run_entry_exit_detection(camera_id, cam_cfg, str(out_dir), cameras)
-        run_zone_intrusion_detection(camera_id, cam_cfg, str(out_dir), cameras)
-        run_tool_slot_detection(camera_id, cam_cfg, str(out_dir), cameras)
-        run_tamper_detection(camera_id, cam_cfg, str(out_dir), cameras)
+        sources = getattr(cam_cfg, "sources", []) or [cam_cfg.source]
+        for clip in sources:
+            logger.info(f"=== Processing {camera_id} ({cam_cfg.location}) on clip: {clip} ===")
+            # Create a temporary config or copy with active source
+            import copy
+            clip_cam_cfg = copy.deepcopy(cam_cfg)
+            clip_cam_cfg.source = clip
+            if clip not in clip_cam_cfg.sources:
+                clip_cam_cfg.sources = [clip]
+            
+            run_entry_exit_detection(camera_id, clip_cam_cfg, str(out_dir), cameras)
+            run_zone_intrusion_detection(camera_id, clip_cam_cfg, str(out_dir), cameras)
+            run_tool_slot_detection(camera_id, clip_cam_cfg, str(out_dir), cameras)
+            run_tamper_detection(camera_id, clip_cam_cfg, str(out_dir), cameras)
 
     events_file = str(out_dir / "events.jsonl")
     if Path(events_file).is_file():

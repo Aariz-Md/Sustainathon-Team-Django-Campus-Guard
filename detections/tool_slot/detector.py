@@ -248,7 +248,7 @@ def draw_slot_overlay(frame: np.ndarray, slots: list[dict], states: dict[str, st
     
     for slot in slots:
         slot_id = slot["id"]
-        x, y, w, h = slot["roi"]
+        x, y, w, h = (int(v) for v in slot["roi"])
         state = states.get(slot_id, "PRESENT")
         
         # Color based on state
@@ -257,11 +257,11 @@ def draw_slot_overlay(frame: np.ndarray, slots: list[dict], states: dict[str, st
         # Thicker box if this slot changed
         thickness = 3 if slot_id == changed_slot_id else 2
         
-        cv2.rectangle(annotated, (x, y), (x + w, y + h), color, thickness)
+        cv2.rectangle(annotated, (int(x), int(y)), (int(x + w), int(y + h)), color, thickness)
         
         # Label
         label = f"{slot['label']} ({state})"
-        cv2.putText(annotated, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        cv2.putText(annotated, label, (int(x), int(max(y - 5, 10))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
     
     return annotated
 
@@ -287,8 +287,11 @@ def run(
     Returns:
         Stats dict with frames_processed, events_emitted, etc.
     """
-    camera_cfg = cfg.get(camera_id, {})
-    slots = camera_cfg.get("tool_slots", [])
+    camera_cfg = cfg.get(camera_id, {}) if isinstance(cfg, dict) else {}
+    if hasattr(camera_cfg, "tool_slots"):
+        slots = camera_cfg.tool_slots or []
+    else:
+        slots = camera_cfg.get("tool_slots", []) if isinstance(camera_cfg, dict) else []
     
     if not slots:
         return {"frames_processed": 0, "events_emitted": 0, "error": "No tool slots configured"}
