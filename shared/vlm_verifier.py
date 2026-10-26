@@ -519,6 +519,7 @@ class VLMEventWriterWrapper:
         camera_id: str = "cam01",
         camera_cfg: Optional[dict] = None,
         source_clip: str = "source.mp4",
+        clip_path: Optional[str] = None,
     ) -> None:
         self.base_writer = base_writer
         self.filepath = Path(filepath)
@@ -530,6 +531,8 @@ class VLMEventWriterWrapper:
             "start_time": datetime.now(timezone.utc).isoformat(),
         }
         self.source_clip = source_clip
+        self.clip_path = clip_path or source_clip
+        self.latest_frame = None
         self._lock = threading.Lock()
         self._event_counter = 0
 
