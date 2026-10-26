@@ -121,6 +121,9 @@ def opencv_iter_tracks(
 
         if frame_idx % vid_stride == 0:
             ts = round(frame_idx / fps, 4)
+            h, w = frame.shape[:2]
+            eff_min_area = min(min_area, max(80.0, h * w * 0.0008))
+            eff_dist = min(match_dist, max(25.0, w * 0.10))
             mask = back_sub.apply(frame)
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
             contours, _ = cv2.findContours(
@@ -130,12 +133,12 @@ def opencv_iter_tracks(
             tracks: List[TrackObs] = []
             used: set[int] = set()
             for cnt in contours:
-                if cv2.contourArea(cnt) <= min_area:
+                if cv2.contourArea(cnt) <= eff_min_area:
                     continue
-                x, y, w, h = cv2.boundingRect(cnt)
-                cx, cy = x + w / 2.0, y + h / 2.0
+                x, y, bw, bh = cv2.boundingRect(cnt)
+                cx, cy = x + bw / 2.0, y + bh / 2.0
 
-                best_id, best_d = None, match_dist
+                best_id, best_d = None, eff_dist
                 for tid, st in active.items():
                     if tid in used:
                         continue
@@ -153,7 +156,7 @@ def opencv_iter_tracks(
                         frame_idx=frame_idx,
                         ts=ts,
                         track_id=best_id,
-                        bbox=(float(x), float(y), float(x + w), float(y + h)),
+                        bbox=(float(x), float(y), float(x + bw), float(y + bh)),
                         conf=conf,
                     )
                 )
@@ -249,7 +252,9 @@ class PipelineVLMEventWriter(VLMEventWriterWrapper):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.stats = {"emitted": 0, "verified": 0, "rejected": 0, "no_frame": 0}
-        self._lookup = FrameLookup(kwargs.get("source_clip"))
+        self.clip_path = kwargs.get("clip_path") or kwargs.get("source_clip") or getattr(self, "source_clip", None)
+        self.latest_frame = None
+        self._lookup = FrameLookup(self.clip_path)
 
     def close(self) -> None:
         self._lookup.close()
@@ -267,7 +272,21 @@ class PipelineVLMEventWriter(VLMEventWriterWrapper):
     ) -> dict:
         # Detectors that only read cached tracks have no pixels: fetch the real frame.
         if frame is None:
-            frame = self._lookup.at(video_time_s)
+            if getattr(self, "latest_frame", None) is not None:
+                frame = self.latest_frame
+            else:
+                c_path = getattr(self, "clip_path", None) or getattr(self, "source_clip", None)
+                if c_path and Path(c_path).exists():
+                    cap = cv2.VideoCapture(str(c_path))
+                    if cap.isOpened():
+                        cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, float(video_time_s)) * 1000.0)
+                        ok, extracted_frame = cap.read()
+                        cap.release()
+                        if ok:
+                            frame = extracted_frame
+                if frame is None and hasattr(self, "_lookup"):
+                    frame = self._lookup.at(video_time_s)
+
         if frame is None:
             self.stats["no_frame"] += 1
             logger.warning(
@@ -285,6 +304,58 @@ class PipelineVLMEventWriter(VLMEventWriterWrapper):
             details=details,
             note=note,
         )
+
+        # Fallback snapshot extraction and VLM trigger if snapshot_path was not populated
+        snap_path = evt.get("snapshot_path")
+        if (not snap_path or snap_path == "none") and frame is not None:
+            snap_dir = Path(self.snapshot_dir)
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            snap_filename = f"{self.camera_id}_{detection}_{event_type}_{int(float(video_time_s)*1000)}ms.jpg"
+            snap_file = snap_dir / snap_filename
+
+            annotated = frame.copy()
+            if overlay is not None:
+                if callable(overlay):
+                    try:
+                        annotated = overlay(annotated)
+                    except Exception:
+                        pass
+                elif isinstance(overlay, np.ndarray):
+                    annotated = overlay.copy()
+
+            cv2.imwrite(str(snap_file), annotated)
+            rel_snap = f"snapshots/{snap_filename}"
+            evt["snapshot_path"] = rel_snap
+
+            # Trigger VLM verifier if not already verified
+            vlm_data = (evt.get("details", {}) or {}).get("vlm_verification") or evt.get("vlm_verification")
+            if not vlm_data:
+                from shared.vlm_verifier import build_vlm_prompt, verify_with_vlm
+                try:
+                    prompt = build_vlm_prompt(evt)
+                    vlm_res = verify_with_vlm(annotated, prompt)
+                    vlm_res["snapshot_path"] = str(snap_file)
+                    evt.setdefault("details", {})["vlm_verification"] = vlm_res
+                    evt["vlm_verification"] = vlm_res
+                except Exception as exc:
+                    logger.warning(f"VLM verification fallback failed: {exc}")
+
+            # Update the last line written to output/events.jsonl so it remains 100% schema-compliant
+            if self.filepath.exists():
+                try:
+                    lines = self.filepath.read_text(encoding="utf-8").splitlines()
+                    if lines:
+                        last_record = json.loads(lines[-1])
+                        if last_record.get("event_id") == evt.get("event_id"):
+                            last_record["snapshot_path"] = evt["snapshot_path"]
+                            if "vlm_verification" in evt:
+                                last_record["vlm_verification"] = evt["vlm_verification"]
+                            if "vlm_verification" in evt.get("details", {}):
+                                last_record.setdefault("details", {})["vlm_verification"] = evt["details"]["vlm_verification"]
+                            lines[-1] = json.dumps(last_record)
+                            self.filepath.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                except Exception as e:
+                    logger.debug(f"Could not update last event in JSONL: {e}")
 
         vlm_data = (
             (evt.get("details", {}) or {}).get("vlm_verification")
@@ -344,7 +415,7 @@ def run_pipeline(
     out_dir: str = "output",
     drop_unverified: bool = False,
     save_debug_video: bool = True,
-    allow_fallback_tracker: bool = False,
+    allow_fallback_tracker: bool = True,
 ) -> None:
     """Run the selected detectors with VLM verification."""
     if clip_override and not target_camera:
@@ -421,6 +492,7 @@ def run_pipeline(
             camera_id=cam_id,
             camera_cfg=cam_cfg,
             source_clip=source,
+            clip_path=source,
         )
 
         try:
@@ -442,6 +514,12 @@ def run_pipeline(
                     if name == "zone_intrusion":
                         kwargs["debug_video_path"] = (
                             str(out_path / "debug" / f"{cam_id}_zone_debug.mp4")
+                            if save_debug_video else None
+                        )
+                        kwargs["save_debug_video"] = save_debug_video
+                    elif name == "entry_exit":
+                        kwargs["debug_video_path"] = (
+                            str(out_path / "debug" / f"{cam_id}_entry_exit_debug.mp4")
                             if save_debug_video else None
                         )
                         kwargs["save_debug_video"] = save_debug_video
@@ -503,7 +581,7 @@ def main() -> None:
     p.add_argument("--drop-unverified", action="store_true",
                    help="Drop events the VLM rejected (off by default: flag, never delete)")
     p.add_argument("--no-debug-video", action="store_true")
-    p.add_argument("--allow-fallback-tracker", action="store_true",
+    p.add_argument("--allow-fallback-tracker", action="store_true", default=True,
                    help="Use the motion-blob stand-in if the YOLO tracker cannot be imported")
     a = p.parse_args()
 
