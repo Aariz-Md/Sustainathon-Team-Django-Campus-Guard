@@ -1,0 +1,5 @@
+camera_id,video_time_s,event_type
+cam01,5.0,tamper_blur
+cam01,5.0,tamper_covered
+cam01,5.0,tamper_moved
+cam01,5.0,camera_offline
