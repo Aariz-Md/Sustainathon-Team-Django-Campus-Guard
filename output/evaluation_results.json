@@ -1,0 +1,97 @@
+{
+  "summary": {
+    "total_tp": 2,
+    "total_fp": 0,
+    "total_fn": 0,
+    "precision": 1.0,
+    "recall": 1.0
+  },
+  "scenarios": {
+    "cam01_clean_removal.mp4": {
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "emitted_count": 2,
+      "expected_count": 2,
+      "emitted_events": [
+        {
+          "event_type": "tool_removed",
+          "video_time_s": 9.8,
+          "confidence": 0.99,
+          "details": {
+            "slot_id": "slot_01",
+            "label": "hammer",
+            "ssim_score": 0.003
+          }
+        },
+        {
+          "event_type": "tool_returned",
+          "video_time_s": 19.8,
+          "confidence": 0.7434725761413574,
+          "details": {
+            "slot_id": "slot_01",
+            "label": "hammer",
+            "ssim_score": 0.993
+          }
+        }
+      ],
+      "stats": {
+        "frames_processed": 150,
+        "events_emitted": 2,
+        "duration_s": 0.7263140678405762
+      }
+    },
+    "cam01_hand_occlusion.mp4": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "emitted_count": 0,
+      "expected_count": 0,
+      "emitted_events": [],
+      "stats": {
+        "frames_processed": 100,
+        "events_emitted": 0,
+        "duration_s": 0.38768768310546875
+      }
+    },
+    "cam01_lighting_change.mp4": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "emitted_count": 0,
+      "expected_count": 0,
+      "emitted_events": [],
+      "stats": {
+        "frames_processed": 100,
+        "events_emitted": 0,
+        "duration_s": 0.349947452545166
+      }
+    },
+    "cam01_camera_nudge.mp4": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "emitted_count": 0,
+      "expected_count": 0,
+      "emitted_events": [],
+      "stats": {
+        "frames_processed": 75,
+        "events_emitted": 0,
+        "duration_s": 0.2589263916015625
+      }
+    },
+    "cam01_stable.mp4": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "emitted_count": 0,
+      "expected_count": 0,
+      "emitted_events": [],
+      "stats": {
+        "frames_processed": 75,
+        "events_emitted": 0,
+        "duration_s": 0.2517969608306885
+      }
+    }
+  }
+}
