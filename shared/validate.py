@@ -79,3 +79,20 @@ def validate_config(cfg: dict) -> None:
         raise ValueError(
             f"Camera config validation failed at /{location}: {first.message}"
         )
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python -m shared.validate <path_to_events.jsonl>")
+        sys.exit(1)
+    target_path = sys.argv[1]
+    count, errs = validate_events_file(target_path)
+    if errs:
+        print(f"FAILED: {len(errs)} invalid event(s) in {target_path}")
+        for err in errs:
+            print(f"  {err}")
+        sys.exit(1)
+    else:
+        print(f"PASSED: All {count} event(s) in {target_path} are valid according to schema.")
+        sys.exit(0)

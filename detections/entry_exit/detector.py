@@ -104,12 +104,23 @@ def run(
                     continue
                 last_event_s[key] = ft.ts
                 event_type = "entry" if dot > 0 else "exit"
+                def _draw_crossing(vis, b=obs.bbox, p1=ln["a"], p2=ln["b"], t_id=tid, e_type=event_type):
+                    img = vis.copy()
+                    pt1 = (int(p1[0]), int(p1[1]))
+                    pt2 = (int(p2[0]), int(p2[1]))
+                    cv2.line(img, pt1, pt2, (0, 255, 255), 2, cv2.LINE_AA)
+                    bx1, by1, bx2, by2 = (int(v) for v in b)
+                    cv2.rectangle(img, (bx1, by1), (bx2, by2), (255, 0, 0), 2)
+                    cv2.putText(img, f"ID:{t_id} [{e_type}]", (bx1, max(by1 - 8, 18)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 0), 2, cv2.LINE_AA)
+                    return img
+
                 writer.emit(
                     "entry_exit",
                     event_type,
                     video_time_s=float(ft.ts),
                     confidence=min(1.0, max(0.0, obs.conf)),
                     frame=ft.frame,
+                    overlay=_draw_crossing,
                     details={"line_id": ln["id"], "track_id": tid},
                     note=ENTRY_NOTE if event_type == "entry" else EXIT_NOTE,
                 )

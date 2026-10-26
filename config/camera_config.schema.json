@@ -82,35 +82,51 @@
           }
         },
         "zones": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": [
-              "id",
-              "restricted",
-              "polygon"
-            ],
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "restricted": {
-                "type": "boolean"
-              },
-              "polygon": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "restricted",
+                  "polygon"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "restricted": {
+                    "type": "boolean"
+                  },
+                  "polygon": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "minItems": 3
+                  }
+                }
+              }
+            },
+            {
+              "type": "array",
+              "items": {
                 "type": "array",
                 "items": {
-                  "type": "array",
-                  "items": {
-                    "type": "number"
-                  },
-                  "minItems": 2,
-                  "maxItems": 2
+                  "type": "number"
                 },
-                "minItems": 3
-              }
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "minItems": 3
             }
-          }
+          ]
         },
         "operating_hours": {
           "type": "array",

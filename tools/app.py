@@ -251,8 +251,26 @@ else:
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        display_cols = [c for c in ["event_id", "timestamp", "detection", "event_type", "camera_id", "source_clip", "confidence"] if c in filtered_df.columns]
-        st.dataframe(filtered_df[display_cols], use_container_width=True, height=450)
+        # Extract VLM status for display in table
+        table_df = filtered_df.copy()
+        if not table_df.empty:
+            def extract_vlm_badge(row):
+                vlm = row.get("vlm_verification") or (row.get("details", {}) or {}).get("vlm_verification")
+                if isinstance(vlm, dict):
+                    v = vlm.get("verified")
+                    c = vlm.get("confidence", 0.0)
+                    return f"✅ Verified ({c:.2f})" if v else f"❌ Rejected ({c:.2f})"
+                return "—"
+
+            table_df["VLM Verdict"] = table_df.apply(extract_vlm_badge, axis=1)
+
+        display_cols = [
+            c for c in [
+                "event_id", "timestamp", "detection", "event_type",
+                "VLM Verdict", "camera_id", "source_clip", "confidence"
+            ] if c in table_df.columns
+        ]
+        st.dataframe(table_df[display_cols], use_container_width=True, height=450)
         
     with col2:
         if not filtered_df.empty:
@@ -263,8 +281,26 @@ else:
             st.markdown(f"**Module:** `{event.get('detection')}` | **Type:** `{event.get('event_type')}`")
             st.markdown(f"**Location:** {event.get('location', 'N/A')} | **Camera:** `{event.get('camera_id')}` | **Source:** `{event.get('source_clip')}`")
             st.markdown(f"**Note:** _{event.get('note', 'N/A')}_")
+
+            # Layer 2 VLM Verification Section
+            vlm_info = event.get("vlm_verification")
+            if not isinstance(vlm_info, dict):
+                vlm_info = (event.get("details", {}) or {}).get("vlm_verification")
+            
+            if isinstance(vlm_info, dict):
+                st.markdown("---")
+                st.markdown("#### 🧠 Layer 2: Local Qwen VLM Verification (`qwen3.5:4b`)")
+                is_ver = vlm_info.get("verified", False)
+                ver_badge = "✅ **ANOMALY CONFIRMED**" if is_ver else "❌ **ANOMALY REJECTED**"
+                v_conf = vlm_info.get("confidence", 0.0)
+                v_model = vlm_info.get("model", "qwen3.5:4b")
+                st.markdown(f"**Verdict:** {ver_badge} | **VLM Conf:** `{v_conf:.2f}` | **Model:** `{v_model}`")
+                st.info(f"**Reason:** {vlm_info.get('reason', 'No reasoning provided.')}")
+                st.markdown("---")
             
             snapshot_path = event.get("snapshot_path")
+            if not snapshot_path and isinstance(vlm_info, dict):
+                snapshot_path = vlm_info.get("snapshot_path")
             clip_path = event.get("clip_path")
             
             if snapshot_path:

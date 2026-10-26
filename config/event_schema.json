@@ -86,6 +86,9 @@
     },
     "note": {
       "type": ["string", "null"]
+    },
+    "vlm_verification": {
+      "type": ["object", "null"]
     }
   },
   "allOf": [
