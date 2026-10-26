@@ -251,17 +251,13 @@ def run_entry_exit_detection(
         logger.info(f"[{camera_id}] No boundary lines configured. Skipping entry/exit.")
         return
 
-    run_entry_exit = None
     try:
         from detections.entry_exit.detector import run as run_entry_exit
     except ImportError:
-        try:
-            from aariz_work.detections.entry_exit.detector import run as run_entry_exit
-        except ImportError:
-            logger.warning(
-                "detections.entry_exit.detector not found in either location. Skipping entry/exit."
-            )
-            return
+        logger.warning(
+            "detections.entry_exit.detector not found. Skipping entry/exit."
+        )
+        return
 
     source_clip = cam_cfg.source
     if not source_clip or not Path(source_clip).is_file():

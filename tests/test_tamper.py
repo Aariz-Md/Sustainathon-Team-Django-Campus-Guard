@@ -104,7 +104,7 @@ class TestParams:
         assert GEN_PARAMS["blur_ksize_end"] > GEN_PARAMS["blur_ksize_start"]
 
     def test_output_paths_are_relative_to_repo(self):
-        assert "sanjaay_work" in str(OUTPUT_DIR) or OUTPUT_DIR.name == "synthetic"
+        assert OUTPUT_DIR.name == "synthetic" or "output" in str(OUTPUT_DIR)
         assert LABELS_FILE.name == "tamper_synthetic.csv"
 
 
