@@ -1,0 +1,1 @@
+"""Tool slot detection module."""
