@@ -18,6 +18,45 @@ import cv2
 import numpy as np
 from skimage.metrics import structural_similarity as ssim
 
+from shared.event_writer import EventWriter
+
+# Lazy IdentityTracker (only loaded when person_tracks are supplied to run())
+_TRACKER: Optional[object] = None
+
+
+def _get_identity_tracker():
+    global _TRACKER
+    if _TRACKER is None:
+        from shared.face_engine import CampusFaceEngine, IdentityTracker
+        engine = CampusFaceEngine(db_dir="data/known_faces")
+        _TRACKER = IdentityTracker(engine)
+    return _TRACKER
+
+
+def _resolve_suspect(frame, active_tracks, id_tracker):
+    """
+    Resolve the identity of the most-prominent visible person before tampering.
+    Picks the track with the largest bounding-box area (closest / most visible).
+    Returns a 'person' metadata dict or None if unrecognised / no tracks.
+    """
+    if not active_tracks or frame is None:
+        return None
+    best = max(
+        active_tracks,
+        key=lambda o: (o.bbox[2] - o.bbox[0]) * (o.bbox[3] - o.bbox[1]),
+    )
+    x1, y1, x2, y2 = best.bbox
+    h, w = frame.shape[:2]
+    crop = frame[max(0, int(y1)):min(h, int(y2)), max(0, int(x1)):min(w, int(x2))]
+    matched_name, face_conf = id_tracker.process_track(best.track_id, crop)
+    if matched_name == "Unknown":
+        return None
+    return {
+        "name": matched_name,
+        "status": "AUTHORIZED",
+        "face_confidence": face_conf,
+    }
+
 # Module parameters
 PARAMS = {
     "persist_s": 3.0,  # Duration a condition must persist before alerting
@@ -96,16 +135,22 @@ def run(
     writer: Any,
     *,
     max_seconds: Optional[float] = None,
+    person_tracks: Optional[dict] = None,
 ) -> dict:
     """Run tamper detection on a video source.
-    
+
     Args:
         camera_id: Camera identifier
         source: Path to video file or stream URL
         cfg: Camera configuration dict
         writer: Event writer with emit() method
         max_seconds: Optional limit on processing duration
-    
+        person_tracks: Optional dict mapping video_time_s (float) -> list of
+            TrackObs-like objects with .bbox and .track_id. When provided,
+            face recognition is attempted on the most-prominent person visible
+            at tamper time to log a suspect. When absent, events are emitted
+            without person/suspect metadata.
+
     Returns:
         dict with run statistics
     """
@@ -159,7 +204,22 @@ def run(
                 elif state.state == State.TAMPER_PENDING and state.pending_type == "camera_offline":
                     persist_duration = video_time_s - state.pending_start_s
                     if persist_duration >= PARAMS["persist_s"]:
-                        # Emit alert
+                        # Emit alert — attempt suspect capture from last seen tracks
+                        offline_details = {"metric": "frame_gap_s", "val": gap}
+                        if person_tracks is not None:
+                            closest_ts = min(
+                                person_tracks.keys(),
+                                key=lambda t: abs(t - video_time_s),
+                                default=None,
+                            )
+                            if closest_ts is not None:
+                                suspect = _resolve_suspect(
+                                    frame,
+                                    person_tracks[closest_ts],
+                                    _get_identity_tracker(),
+                                )
+                                if suspect:
+                                    offline_details["person"] = suspect
                         writer.emit(
                             detection="tamper",
                             event_type="camera_offline",
@@ -167,7 +227,7 @@ def run(
                             confidence=0.95,
                             frame=frame,
                             overlay=None,
-                            details={"metric": "frame_gap_s", "val": gap},
+                            details=offline_details,
                             note="Possible camera offline or signal loss detected; human review required",
                         )
                         events_emitted += 1
@@ -221,12 +281,27 @@ def run(
                     # Still pending same issue, check if persist threshold met
                     persist_duration = video_time_s - state.pending_start_s
                     if persist_duration >= PARAMS["persist_s"]:
-                        # Emit alert
+                        # Emit alert — attempt suspect capture from last seen tracks
                         note_map = {
                             "tamper_blur": "Possible camera blur or defocus detected; human review required",
                             "tamper_covered": "Possible camera occlusion detected; human review required",
                             "tamper_moved": "Possible camera displacement detected; human review required",
                         }
+                        tamper_details = dict(details)
+                        if person_tracks is not None:
+                            closest_ts = min(
+                                person_tracks.keys(),
+                                key=lambda t: abs(t - video_time_s),
+                                default=None,
+                            )
+                            if closest_ts is not None:
+                                suspect = _resolve_suspect(
+                                    frame,
+                                    person_tracks[closest_ts],
+                                    _get_identity_tracker(),
+                                )
+                                if suspect:
+                                    tamper_details["person"] = suspect
                         writer.emit(
                             detection="tamper",
                             event_type=current_issue,
@@ -234,7 +309,7 @@ def run(
                             confidence=confidence,
                             frame=frame,
                             overlay=None,
-                            details=details,
+                            details=tamper_details,
                             note=note_map.get(current_issue, "Possible camera tamper detected; human review required"),
                         )
                         events_emitted += 1

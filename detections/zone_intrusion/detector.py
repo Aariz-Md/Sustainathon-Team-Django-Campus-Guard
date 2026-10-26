@@ -28,6 +28,20 @@ from shapely.geometry import Point, Polygon as ShapelyPolygon
 from shapely.prepared import prep
 
 from shared.config import CameraConfig, zone_polygons, is_within_hours
+from typing import Optional
+
+# ── Lazy IdentityTracker ─────────────────────────────────────────────
+_TRACKER: Optional[object] = None
+
+
+def _get_identity_tracker():
+    global _TRACKER
+    if _TRACKER is None:
+        from shared.face_engine import CampusFaceEngine, IdentityTracker
+        engine = CampusFaceEngine(db_dir="data/known_faces")
+        _TRACKER = IdentityTracker(engine)
+    return _TRACKER
+
 
 # ── Parameters ─────────────────────────────────────────────────────
 
@@ -299,6 +313,8 @@ def run(
     else:
         frames_iter = source
 
+    id_tracker = _get_identity_tracker()
+
     obs_counts: dict[int, int] = {}
     zi_state: dict[tuple[str, int], dict] = {}
     ghost_states: dict[str, list[tuple[float, dict]]] = {}
@@ -410,6 +426,27 @@ def run(
                                     video_time_s=ft.ts,
                                     frame_dt=frame_dt,
                                 )
+                                event_details = {
+                                    "zone_id": zid,
+                                    "track_id": tid,
+                                    "dwell_s": round(dwell, 2),
+                                }
+                                note = "Possible restricted-zone intrusion detected; human review required"
+                                if ft.frame is not None:
+                                    x1, y1, x2, y2 = obs.bbox
+                                    h, w = ft.frame.shape[:2]
+                                    crop = ft.frame[max(0, int(y1)):min(h, int(y2)), max(0, int(x1)):min(w, int(x2))]
+                                    matched_name, face_conf = id_tracker.process_track(tid, crop)
+                                    if matched_name != "Unknown":
+                                        event_details["person"] = {
+                                            "name": matched_name,
+                                            "status": "AUTHORIZED",
+                                            "face_confidence": face_conf,
+                                        }
+                                        note = (
+                                            f"Intruder identified as {matched_name} in {zid}; "
+                                            "human review required"
+                                        )
                                 writer.emit(
                                     detection="zone_intrusion",
                                     event_type="zone_intrusion",
@@ -417,12 +454,8 @@ def run(
                                     confidence=round(min(0.5 + dwell * 0.1, 0.99), 4),
                                     frame=ft.frame,
                                     overlay=overlay_frame,
-                                    details={
-                                        "zone_id": zid,
-                                        "track_id": tid,
-                                        "dwell_s": round(dwell, 2),
-                                    },
-                                    note="Possible restricted-zone intrusion detected; human review required",
+                                    details=event_details,
+                                    note=note,
                                 )
                                 stats["zone_intrusion_events"] += 1
                             st["state"] = _INSIDE_ALERTED
@@ -476,6 +509,32 @@ def run(
                                 video_time_s=ft.ts,
                                 frame_dt=frame_dt,
                             )
+                            ah_details = {
+                                "zone_id": zid,
+                                "track_id": rep_tid,
+                                "dwell_s": round(persist, 2),
+                            }
+                            ah_note = "Possible after-hours presence detected; human review required"
+                            if ft.frame is not None:
+                                # Find the representative obs for the crop
+                                rep_obs = next(
+                                    (o for o in ft.tracks if o.track_id == rep_tid), None
+                                )
+                                if rep_obs is not None:
+                                    x1, y1, x2, y2 = rep_obs.bbox
+                                    h, w = ft.frame.shape[:2]
+                                    crop = ft.frame[max(0, int(y1)):min(h, int(y2)), max(0, int(x1)):min(w, int(x2))]
+                                    matched_name, face_conf = id_tracker.process_track(rep_tid, crop)
+                                    if matched_name != "Unknown":
+                                        ah_details["person"] = {
+                                            "name": matched_name,
+                                            "status": "AUTHORIZED",
+                                            "face_confidence": face_conf,
+                                        }
+                                        ah_note = (
+                                            f"After-hours presence: {matched_name} detected in {zid}; "
+                                            "human review required"
+                                        )
                             writer.emit(
                                 detection="zone_intrusion",
                                 event_type="after_hours_presence",
@@ -483,12 +542,8 @@ def run(
                                 confidence=round(min(0.4 + persist * 0.05, 0.95), 4),
                                 frame=ft.frame,
                                 overlay=overlay_frame,
-                                details={
-                                    "zone_id": zid,
-                                    "track_id": rep_tid,
-                                    "dwell_s": round(persist, 2),
-                                },
-                                note="Possible after-hours presence detected; human review required",
+                                details=ah_details,
+                                note=ah_note,
                             )
                             stats["after_hours_events"] += 1
                             ah["last_event_ts"] = ft.ts

@@ -136,6 +136,18 @@ class MockWriter:
         self.events.append(event)
 
 
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Any, Optional
+import unittest.mock as _mock
+
+@dataclass
+class _TamperFakeObs:
+    track_id: int
+    bbox: tuple
+
+
 class TestTamperDetector:
     """Tests for tamper detection logic."""
     
@@ -221,3 +233,61 @@ class TestTamperDetector:
         
         for event in writer.events:
             validate_event(event)  # Should not raise
+
+    def test_suspect_captured_on_tamper_alert(self, blur_clip: Path):
+        """When tamper alerts and person_tracks are present, suspect person is logged."""
+        import detections.tamper.detector as det_mod
+
+        writer = MockWriter()
+        cfg = {"location": "Test"}
+
+        fake_obs = _TamperFakeObs(track_id=12, bbox=(50, 50, 200, 300))
+        person_tracks = {ts: [fake_obs] for ts in [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]}
+
+        mock_tracker = _mock.MagicMock()
+        mock_tracker.process_track.return_value = ("Jhithesh", 0.94)
+
+        with _mock.patch.object(det_mod, "_get_identity_tracker", return_value=mock_tracker):
+            tamper_run(
+                "test_cam",
+                str(blur_clip),
+                cfg,
+                writer,
+                person_tracks=person_tracks,
+            )
+
+        blur_events = [e for e in writer.events if e["event_type"] == "tamper_blur"]
+        assert blur_events, "Expected tamper_blur event"
+        evt = blur_events[0]
+        assert "person" in evt["details"], (
+            f"Expected 'person' suspect key in details: {evt['details']}"
+        )
+        assert evt["details"]["person"]["name"] == "Jhithesh"
+        assert evt["details"]["person"]["status"] == "AUTHORIZED"
+        assert evt["details"]["person"]["face_confidence"] == pytest.approx(0.94, abs=1e-4)
+
+    def test_unknown_suspect_no_person_key(self, blur_clip: Path):
+        """When face engine returns Unknown, no person key is added."""
+        import detections.tamper.detector as det_mod
+
+        writer = MockWriter()
+        cfg = {"location": "Test"}
+
+        fake_obs = _TamperFakeObs(track_id=12, bbox=(50, 50, 200, 300))
+        person_tracks = {ts: [fake_obs] for ts in [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]}
+
+        mock_tracker = _mock.MagicMock()
+        mock_tracker.process_track.return_value = ("Unknown", 0.0)
+
+        with _mock.patch.object(det_mod, "_get_identity_tracker", return_value=mock_tracker):
+            tamper_run(
+                "test_cam",
+                str(blur_clip),
+                cfg,
+                writer,
+                person_tracks=person_tracks,
+            )
+
+        blur_events = [e for e in writer.events if e["event_type"] == "tamper_blur"]
+        assert blur_events
+        assert "person" not in blur_events[0]["details"]

@@ -16,6 +16,56 @@ import numpy as np
 
 from shared.event_writer import EventWriter
 
+# Lazy IdentityTracker (only loaded when person_tracks are supplied to run())
+_TRACKER: Optional[object] = None
+
+
+def _get_identity_tracker():
+    global _TRACKER
+    if _TRACKER is None:
+        from shared.face_engine import CampusFaceEngine, IdentityTracker
+        engine = CampusFaceEngine(db_dir="data/known_faces")
+        _TRACKER = IdentityTracker(engine)
+    return _TRACKER
+
+
+def _bbox_overlap_area(
+    rx: int, ry: int, rw: int, rh: int,
+    bx1: int, by1: int, bx2: int, by2: int,
+) -> int:
+    """Return overlap area between slot ROI rect and a person bounding box."""
+    ix1 = max(rx, bx1)
+    iy1 = max(ry, by1)
+    ix2 = min(rx + rw, bx2)
+    iy2 = min(ry + rh, by2)
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0
+    return (ix2 - ix1) * (iy2 - iy1)
+
+
+def _find_nearest_track(slot_roi, active_tracks):
+    """Return the TrackObs overlapping or nearest to slot_roi, or None."""
+    if not active_tracks:
+        return None
+    sx, sy, sw, sh = slot_roi
+    slot_cx = sx + sw / 2
+    slot_cy = sy + sh / 2
+    best = None
+    best_score = float("inf")
+    for obs in active_tracks:
+        x1, y1, x2, y2 = obs.bbox
+        overlap = _bbox_overlap_area(sx, sy, sw, sh, x1, y1, x2, y2)
+        if overlap > 0:
+            score = -float(overlap)        # negative → smaller → preferred
+        else:
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
+            score = ((cx - slot_cx) ** 2 + (cy - slot_cy) ** 2) ** 0.5
+        if score < best_score:
+            best_score = score
+            best = obs
+    return best
+
 
 # --- parameters (module-level dict per project convention) ---
 PARAMS: dict = {
@@ -273,17 +323,22 @@ def run(
     writer: EventWriter,
     *,
     max_seconds: Optional[float] = None,
+    person_tracks: Optional[dict] = None,
 ) -> dict:
     """
     Run tool slot detection on video source.
-    
+
     Args:
         camera_id: Camera identifier
         source: Video file path or stream URL
         cfg: Full camera config dict
         writer: EventWriter instance
         max_seconds: Optional limit on processing duration
-        
+        person_tracks: Optional dict mapping video_time_s (float) -> list of
+            TrackObs-like objects with .bbox and .track_id. When provided,
+            face recognition is attempted on the nearest person to each slot
+            at event time. When absent, events are emitted without person metadata.
+
     Returns:
         Stats dict with frames_processed, events_emitted, etc.
     """
@@ -400,7 +455,42 @@ def run(
                     threshold = slot["t_missing"] if event["event_type"] == "tool_removed" else slot["t_present"]
                     distance = abs(ssim_score - threshold)
                     confidence = min(0.5 + distance, 0.99)
-                    
+
+                    event_details = {
+                        "slot_id": slot_id,
+                        "label": slot["label"],
+                        "ssim_score": round(ssim_score, 3),
+                    }
+
+                    # Event-gated face recognition: attempt to identify nearest person
+                    if person_tracks is not None:
+                        # Find the closest timestamp bucket in person_tracks
+                        closest_ts = min(
+                            person_tracks.keys(),
+                            key=lambda t: abs(t - video_time_s),
+                            default=None,
+                        )
+                        if closest_ts is not None and abs(closest_ts - video_time_s) <= 1.0:
+                            active = person_tracks[closest_ts]
+                            best_obs = _find_nearest_track(slot["roi"], active)
+                            if best_obs is not None:
+                                id_tracker = _get_identity_tracker()
+                                x1, y1, x2, y2 = best_obs.bbox
+                                h_fr, w_fr = frame.shape[:2]
+                                crop = frame[
+                                    max(0, int(y1)):min(h_fr, int(y2)),
+                                    max(0, int(x1)):min(w_fr, int(x2)),
+                                ]
+                                matched_name, face_conf = id_tracker.process_track(
+                                    best_obs.track_id, crop
+                                )
+                                if matched_name != "Unknown":
+                                    event_details["person"] = {
+                                        "name": matched_name,
+                                        "status": "AUTHORIZED",
+                                        "face_confidence": face_conf,
+                                    }
+
                     # Emit event
                     writer.emit(
                         detection="tool_slot",
@@ -409,11 +499,7 @@ def run(
                         confidence=confidence,
                         frame=frame,
                         overlay=overlay_fn,
-                        details={
-                            "slot_id": slot_id,
-                            "label": slot["label"],
-                            "ssim_score": round(ssim_score, 3),
-                        },
+                        details=event_details,
                         note="Possible tool change; human review required",
                     )
                     
