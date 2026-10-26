@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "event_schema.json",
+  "title": "Detection Event",
+  "description": "One JSON event object per line in output/events.jsonl",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "detection",
+    "event_type",
+    "camera_id",
+    "location",
+    "timestamp",
+    "video_time_s",
+    "source_clip",
+    "confidence",
+    "snapshot_path",
+    "clip_path",
+    "details",
+    "status",
+    "note"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "pattern": "^evt_\\d+$"
+    },
+    "detection": {
+      "type": "string",
+      "enum": ["entry_exit", "zone_intrusion", "tool_slot", "tamper"]
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "entry",
+        "exit",
+        "zone_intrusion",
+        "after_hours_presence",
+        "tool_removed",
+        "tool_returned",
+        "tamper_blur",
+        "tamper_covered",
+        "tamper_moved",
+        "camera_offline",
+        "fault_cleared"
+      ]
+    },
+    "camera_id": {
+      "type": "string",
+      "pattern": "^cam\\d+$"
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "video_time_s": {
+      "type": "number",
+      "minimum": 0.0
+    },
+    "source_clip": {
+      "type": "string",
+      "minLength": 1
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "snapshot_path": {
+      "type": ["string", "null"]
+    },
+    "clip_path": {
+      "type": ["string", "null"]
+    },
+    "details": {
+      "type": "object"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["new", "acknowledged", "resolved"]
+    },
+    "note": {
+      "type": ["string", "null"]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "detection": {
+            "const": "entry_exit"
+          }
+        },
+        "required": ["detection"]
+      },
+      "then": {
+        "properties": {
+          "event_type": {
+            "enum": ["entry", "exit"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "detection": {
+            "const": "zone_intrusion"
+          }
+        },
+        "required": ["detection"]
+      },
+      "then": {
+        "properties": {
+          "event_type": {
+            "enum": ["zone_intrusion", "after_hours_presence"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "detection": {
+            "const": "tool_slot"
+          }
+        },
+        "required": ["detection"]
+      },
+      "then": {
+        "properties": {
+          "event_type": {
+            "enum": ["tool_removed", "tool_returned"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "detection": {
+            "const": "tamper"
+          }
+        },
+        "required": ["detection"]
+      },
+      "then": {
+        "properties": {
+          "event_type": {
+            "enum": [
+              "tamper_blur",
+              "tamper_covered",
+              "tamper_moved",
+              "camera_offline",
+              "fault_cleared"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
